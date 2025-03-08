@@ -1,1 +1,133 @@
+###資料分割###
+import os
 
+dataset_path = "Fruit-262/"  
+if os.path.exists(dataset_path):
+    fruits = os.listdir(dataset_path)
+    print(f"共有 {len(fruits)} 類水果：")
+    print(fruits[:10])  # 顯示前 10 種水果類別
+else:
+    print(f"找不到資料夾: {dataset_path}")
+
+import os
+import shutil
+import random
+
+dataset_path = "Fruit-262"
+train_path = "Fruit-262-train"
+test_path = "Fruit-262-test"
+
+os.makedirs(train_path, exist_ok=True)
+os.makedirs(test_path, exist_ok=True)
+
+for fruit in os.listdir(dataset_path):
+    fruit_path = os.path.join(dataset_path, fruit)
+    if os.path.isdir(fruit_path):
+        images = os.listdir(fruit_path)
+        random.shuffle(images)  # 隨機打亂
+        
+        split_idx = int(len(images) * 0.8)  # 80% 訓練，20% 測試
+        train_images = images[:split_idx]
+        test_images = images[split_idx:]
+
+        os.makedirs(os.path.join(train_path, fruit), exist_ok=True)
+        os.makedirs(os.path.join(test_path, fruit), exist_ok=True)
+
+        for img in train_images:
+            shutil.copy(os.path.join(fruit_path, img), os.path.join(train_path, fruit, img))
+        
+        for img in test_images:
+            shutil.copy(os.path.join(fruit_path, img), os.path.join(test_path, fruit, img))
+
+print("資料分割完成")
+
+
+
+###資料預處裡###
+from PIL import Image 
+import os
+import glob
+
+
+def resize_images(source_folder, target_folder, img_size=(64, 64)):
+    os.makedirs(target_folder, exist_ok=True)
+    for fruit in os.listdir(source_folder):
+        fruit_path = os.path.join(source_folder, fruit)
+        target_fruit_path = os.path.join(target_folder, fruit)
+        os.makedirs(target_fruit_path, exist_ok=True)
+
+        for img_file in glob.glob(f"{fruit_path}/*.jpg"):
+            img = Image.open(img_file).convert("RGB")
+            img = img.resize(img_size, resample=Image.LANCZOS)
+            img.save(os.path.join(target_fruit_path, os.path.basename(img_file)))
+
+resize_images("Fruit-262-train", "Fruits-262-train-resized")
+resize_images("Fruit-262-test", "Fruits-262-test-resized")
+print("圖片縮放完成！")
+
+import json
+
+def build_label_dict(dataset_path, output_folder):
+    fruits = sorted(os.listdir(dataset_path))
+    label_to_number = {fruit: idx for idx, fruit in enumerate(fruits)}
+    number_to_label = {idx: fruit for fruit, idx in label_to_number.items()}
+
+    os.makedirs(output_folder, exist_ok=True)
+    with open(os.path.join(output_folder, "label_to_number.json"), "w") as f:
+        json.dump(label_to_number, f)
+    with open(os.path.join(output_folder, "number_to_label.json"), "w") as f:
+        json.dump(number_to_label, f)
+
+build_label_dict("fruits-262-train-resized", "labels")
+print("標籤對應表建立完成！")
+
+
+
+###建立&訓練模型###
+import tensorflow as tf
+import tensorflow.keras as keras
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+
+# 參數
+img_size = (64, 64)
+batch_size = 64
+
+# 訓練數據生成器
+train_datagen = ImageDataGenerator(rescale=1./255)
+train_generator = train_datagen.flow_from_directory(
+    "Fruits-262-train-resized",
+    target_size=img_size,
+    batch_size=batch_size,
+    class_mode='categorical'
+)
+
+# 測試數據生成器
+test_datagen = ImageDataGenerator(rescale=1./255)
+test_generator = test_datagen.flow_from_directory(
+    "Fruits-262-test-resized",
+    target_size=img_size,
+    batch_size=batch_size,
+    class_mode='categorical'
+)
+
+# 建立模型
+model = keras.Sequential([
+    keras.layers.Conv2D(32, (3,3), activation='relu', input_shape=(64, 64, 3)),
+    keras.layers.MaxPooling2D(2,2),
+    keras.layers.Conv2D(64, (3,3), activation='relu'),
+    keras.layers.MaxPooling2D(2,2),
+    keras.layers.Conv2D(128, (3,3), activation='relu'),
+    keras.layers.MaxPooling2D(2,2),
+    keras.layers.Flatten(),
+    keras.layers.Dense(128, activation='relu'),
+    keras.layers.Dense(256, activation='relu'),
+    keras.layers.Dense(262, activation='softmax')  
+])
+
+# 編譯模型
+model.compile(optimizer='adam',
+              loss='categorical_crossentropy',
+              metrics=['accuracy'])
+
+# 訓練模型
+model.fit(train_generator, epochs=15, validation_data=test_generator)
